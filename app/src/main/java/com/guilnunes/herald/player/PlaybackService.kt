@@ -158,7 +158,7 @@ class PlaybackService : Service() {
             builder.addCustomAction(ACTION_NO, st.gate.noLabel, R.drawable.ic_close)
         } else {
             builder.addCustomAction(ACTION_NEXT_SECTION, "Next section", R.drawable.ic_next_section)
-            builder.addCustomAction(ACTION_CLOSE, "Close", R.drawable.ic_close)
+            builder.addCustomAction(ACTION_CLOSE, "Stop", R.drawable.ic_close)
         }
         session.setPlaybackState(builder.build())
     }
@@ -183,7 +183,9 @@ class PlaybackService : Service() {
             b.addAction(R.drawable.ic_prev, "Back", serviceIntent(ACTION_PREV))
             b.addAction(if (playing) R.drawable.ic_pause else R.drawable.ic_play, if (playing) "Pause" else "Play", serviceIntent(ACTION_TOGGLE))
             b.addAction(R.drawable.ic_next, "Forward", serviceIntent(ACTION_NEXT))
-            b.setStyle(MediaStyle().setMediaSession(session.sessionToken).setShowActionsInCompactView(0, 1, 2))
+            b.addAction(R.drawable.ic_close, "Stop", serviceIntent(ACTION_CLOSE))
+            b.setStyle(MediaStyle().setMediaSession(session.sessionToken).setShowActionsInCompactView(0, 1, 2)
+                .setShowCancelButton(true).setCancelButtonIntent(serviceIntent(ACTION_CLOSE)))
         }
         return b.build()
     }
@@ -210,8 +212,10 @@ class PlaybackService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /** Swiping Herald away from recent apps means "I'm done": stop reading and remove the controls. */
     override fun onTaskRemoved(rootIntent: Intent?) {
-        if (engine.state.value.status != Status.PLAYING) stopAll()
+        stopAll()
+        super.onTaskRemoved(rootIntent)
     }
 
     override fun onDestroy() {
