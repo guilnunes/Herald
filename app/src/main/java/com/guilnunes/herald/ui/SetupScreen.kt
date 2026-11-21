@@ -46,16 +46,16 @@ fun SetupScreen(vm: MainViewModel) {
         ) {
             Text("Herald", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
             Text("Reads your Notion pages aloud. One-time setup:", style = MaterialTheme.typography.bodyLarge)
-            Step("1", "Create a free integration named Herald (type: Internal) and copy its secret.")
+            Step("1", "Create a free Notion connection: tap Create a new connection, name it Herald, choose your workspace (type Internal if asked). Open it and copy its secret, labeled Internal Integration Secret or Installation access token.")
             OutlinedButton(onClick = {
                 ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.notion.so/profile/integrations")))
-            }) { Text("Open Notion integrations") }
+            }) { Text("Open Notion connections") }
             Step("2", "In Notion, on each top-level page you want to hear: ••• › Connections › Herald. Every page inside it is included.")
-            Step("3", "Paste the secret here.")
+            Step("3", "Paste the secret here and tap Connect.")
             OutlinedTextField(
                 value = token,
                 onValueChange = { token = it },
-                label = { Text("Integration secret") },
+                label = { Text("Connection secret") },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),

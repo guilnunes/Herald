@@ -62,8 +62,8 @@ class NotionApi(private val token: () -> String?) {
     }
 
     private fun friendly(code: Int, msg: String?): String = when (code) {
-        401 -> "Notion rejected the token. Check it in Settings."
-        403, 404 -> "Herald can't see this page. In Notion, open the page (or a page above it), tap ••• › Connections and add your Herald integration."
+        401 -> "Notion rejected the secret. Copy it again from your Herald connection and paste it in Settings."
+        403, 404 -> "Herald can't see this page. In Notion, open the page (or a page above it), tap ••• › Connections and add Herald."
         else -> msg ?: "Notion error $code."
     }
 

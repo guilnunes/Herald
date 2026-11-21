@@ -11,7 +11,7 @@ Every push to `main` builds, tests, signs and publishes a new release with GitHu
 
 ## First run
 
-1. Create an internal integration named Herald at https://www.notion.so/profile/integrations and copy its secret.
+1. Create an internal connection named Herald at https://www.notion.so/profile/integrations (Notion now calls integrations "connections") and copy its secret (Internal Integration Secret or Installation access token).
 2. In Notion, on each top-level page you want to hear: ••• › Connections › Herald. Pages inside it are included.
 3. Open Herald and paste the secret.
 
