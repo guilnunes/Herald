@@ -59,6 +59,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInWindow
@@ -108,7 +109,7 @@ fun ReaderScreen(vm: MainViewModel) {
                 }
             }
 
-            Box(Modifier.weight(1f)) {
+            Box(Modifier.weight(1f).clipToBounds()) {
                 val script = st.script
                 if (st.status == Status.LOADING || script == null) {
                     Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -142,6 +143,7 @@ fun ReaderScreen(vm: MainViewModel) {
                 }
             }
 
+            androidx.compose.material3.HorizontalDivider(thickness = 2.dp, color = MaterialTheme.colorScheme.outline)
             Controls(st, engine)
         }
     }
@@ -232,11 +234,12 @@ private fun PageBody(st: PlayerState, engine: Engine) {
     val lastFollowed = remember { intArrayOf(-1) }
     val playing = st.status == Status.PLAYING
     val sentenceStart = st.sentenceRange?.first ?: -1
+    val wordStart = st.wordRange?.first ?: -1
 
     // Follow the sentence being read, not just the paragraph: with large fonts a single
     // paragraph can be taller than the screen. Runs on every new sentence or item, and when
     // playback resumes (to come back after manual scrolling). Manual scrolling while paused is left alone.
-    LaunchedEffect(st.item, sentenceStart, playing) {
+    LaunchedEffect(st.item, sentenceStart, wordStart, playing) {
         val itemChanged = lastFollowed[0] != st.item
         if (!playing && !itemChanged) return@LaunchedEffect
         lastFollowed[0] = st.item
@@ -254,19 +257,23 @@ private fun PageBody(st: PlayerState, engine: Engine) {
             withFrameNanos { }
         }
 
-        // 2. Put the spoken line inside a comfortable reading zone (upper part of the screen).
+        // 2. Keep the line being spoken inside the reading zone. Follow the current word, so
+        //    sentences longer than the screen keep scrolling instead of running off the bottom.
         val coords = tracker.textCoords?.takeIf { it.isAttached && tracker.item == st.item }
         val layout = tracker.textLayout
-        if (coords != null && layout != null && sentenceStart >= 0 && sentenceStart < layout.layoutInput.text.length) {
-            val firstLine = layout.getLineForOffset(sentenceStart)
-            val lastLine = layout.getLineForOffset((st.sentenceRange?.last ?: sentenceStart).coerceAtMost(layout.layoutInput.text.length - 1))
+        val len = layout?.layoutInput?.text?.length ?: 0
+        val focus = (if (wordStart >= 0) wordStart else sentenceStart).coerceAtMost(len - 1)
+        if (coords != null && layout != null && focus >= 0) {
+            val line = layout.getLineForOffset(focus)
             val textTop = coords.positionInWindow().y
-            val top = textTop + layout.getLineTop(firstLine)
-            // Long sentences: only require the first three lines to fit.
-            val bottom = textTop + layout.getLineBottom(minOf(lastLine, firstLine + 2))
-            val zoneTop = vpTop + vpHeight * 0.10f
-            val zoneBottom = vpTop + vpHeight * 0.80f
-            if (top < zoneTop || bottom > zoneBottom) list.animateScrollBy(top - (vpTop + vpHeight * 0.22f))
+            val top = textTop + layout.getLineTop(line)
+            val bottom = textTop + layout.getLineBottom(line)
+            val zoneTop = vpTop + vpHeight * 0.08f
+            val zoneBottom = vpTop + vpHeight * 0.72f
+            if (top < zoneTop || bottom > zoneBottom) {
+                // At a new sentence, place its first line a bit below the top; mid-sentence, move the current line up.
+                list.animateScrollBy(top - (vpTop + vpHeight * if (wordStart < 0) 0.22f else 0.15f))
+            }
         } else if (jumped && st.item > 0) {
             // Cards (tables, code, child pages): leave a little of the previous content visible.
             list.animateScrollBy(-vpHeight * 0.12f)
