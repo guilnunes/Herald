@@ -59,6 +59,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.text.TextLayoutResult
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.SideEffect
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextStyle
@@ -206,24 +213,81 @@ private fun ReaderHeader(st: PlayerState, onBack: () -> Unit, onSection: () -> U
     }
 }
 
+/**
+ * Remembers where the spoken text is laid out, so the list can keep it in view.
+ * Plain holder (not state) so scrolling does not trigger recompositions.
+ */
+private class FollowTracker {
+    var viewport: LayoutCoordinates? = null
+    var item: Int = -1
+    var textCoords: LayoutCoordinates? = null
+    var textLayout: TextLayoutResult? = null
+}
+
 @Composable
 private fun PageBody(st: PlayerState, engine: Engine) {
     val script = st.script ?: return
-    val list = rememberLazyListState(initialFirstVisibleItemIndex = (st.item - 1).coerceAtLeast(0))
-    LaunchedEffect(st.item) {
-        val target = (st.item - 1).coerceAtLeast(0)
-        val visible = list.layoutInfo.visibleItemsInfo
-        val onScreen = visible.any { it.index == st.item } && visible.lastOrNull()?.index != st.item
-        if (!onScreen || st.status == Status.PLAYING) list.animateScrollToItem(target)
+    val list = rememberLazyListState(initialFirstVisibleItemIndex = st.item.coerceAtLeast(0))
+    val tracker = remember { FollowTracker() }
+    val lastFollowed = remember { intArrayOf(-1) }
+    val playing = st.status == Status.PLAYING
+    val sentenceStart = st.sentenceRange?.first ?: -1
+
+    // Follow the sentence being read, not just the paragraph: with large fonts a single
+    // paragraph can be taller than the screen. Runs on every new sentence or item, and when
+    // playback resumes (to come back after manual scrolling). Manual scrolling while paused is left alone.
+    LaunchedEffect(st.item, sentenceStart, playing) {
+        val itemChanged = lastFollowed[0] != st.item
+        if (!playing && !itemChanged) return@LaunchedEffect
+        lastFollowed[0] = st.item
+        val vp = tracker.viewport?.takeIf { it.isAttached } ?: run { list.scrollToItem(st.item); return@LaunchedEffect }
+        val vpTop = vp.positionInWindow().y
+        val vpHeight = vp.size.height.toFloat()
+        if (vpHeight <= 0f) return@LaunchedEffect
+
+        // 1. Make sure the current item is laid out on screen.
+        val info = list.layoutInfo.visibleItemsInfo.firstOrNull { it.index == st.item }
+        val jumped = info == null || info.offset > vpHeight * 0.8f || info.offset + info.size < vpHeight * 0.05f
+        if (jumped) {
+            val near = list.layoutInfo.visibleItemsInfo.let { v -> v.isNotEmpty() && st.item in (v.first().index - 3)..(v.last().index + 3) }
+            if (near) list.animateScrollToItem(st.item) else list.scrollToItem(st.item)
+            withFrameNanos { }
+        }
+
+        // 2. Put the spoken line inside a comfortable reading zone (upper part of the screen).
+        val coords = tracker.textCoords?.takeIf { it.isAttached && tracker.item == st.item }
+        val layout = tracker.textLayout
+        if (coords != null && layout != null && sentenceStart >= 0 && sentenceStart < layout.layoutInput.text.length) {
+            val firstLine = layout.getLineForOffset(sentenceStart)
+            val lastLine = layout.getLineForOffset((st.sentenceRange?.last ?: sentenceStart).coerceAtMost(layout.layoutInput.text.length - 1))
+            val textTop = coords.positionInWindow().y
+            val top = textTop + layout.getLineTop(firstLine)
+            // Long sentences: only require the first three lines to fit.
+            val bottom = textTop + layout.getLineBottom(minOf(lastLine, firstLine + 2))
+            val zoneTop = vpTop + vpHeight * 0.10f
+            val zoneBottom = vpTop + vpHeight * 0.80f
+            if (top < zoneTop || bottom > zoneBottom) list.animateScrollBy(top - (vpTop + vpHeight * 0.22f))
+        } else if (jumped && st.item > 0) {
+            // Cards (tables, code, child pages): leave a little of the previous content visible.
+            list.animateScrollBy(-vpHeight * 0.12f)
+        }
     }
+
     val hl = MaterialTheme.colorScheme.primaryContainer
-    LazyColumn(state = list, modifier = Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 120.dp)) {
+    LazyColumn(
+        state = list,
+        modifier = Modifier.fillMaxSize().onGloballyPositioned { tracker.viewport = it },
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(bottom = 240.dp),
+    ) {
         itemsIndexed(script.items, key = { i, _ -> i }) { i, item ->
             val current = i == st.item
             val bg = if (current) hl.copy(alpha = 0.25f) else Color.Transparent
             Box(Modifier.fillMaxWidth().background(bg)) {
                 when (item) {
-                    is TextItem -> TextBlock(item, if (current) st else null) { engine.moveTo(i) }
+                    is TextItem -> TextBlock(
+                        item, if (current) st else null,
+                        onLaid = if (current) { c, l -> tracker.item = i; tracker.textCoords = c; tracker.textLayout = l } else null,
+                    ) { engine.moveTo(i) }
                     is NoteItem -> Text(item.text, style = MaterialTheme.typography.bodyLarge, fontStyle = FontStyle.Italic,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.fillMaxWidth().clickable { engine.moveTo(i) }.padding(horizontal = 20.dp, vertical = 8.dp))
@@ -238,7 +302,12 @@ private fun PageBody(st: PlayerState, engine: Engine) {
 }
 
 @Composable
-private fun TextBlock(item: TextItem, st: PlayerState?, onClick: () -> Unit) {
+private fun TextBlock(
+    item: TextItem,
+    st: PlayerState?,
+    onLaid: ((LayoutCoordinates, TextLayoutResult) -> Unit)? = null,
+    onClick: () -> Unit,
+) {
     val style: TextStyle = when (item.kind) {
         Kind.H1 -> MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold, fontSize = 30.sp, lineHeight = 38.sp)
         Kind.H2 -> MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold, fontSize = 26.sp, lineHeight = 34.sp)
@@ -247,12 +316,25 @@ private fun TextBlock(item: TextItem, st: PlayerState?, onClick: () -> Unit) {
         else -> MaterialTheme.typography.bodyLarge
     }
     val top = when (item.kind) { Kind.H1 -> 24.dp; Kind.H2 -> 18.dp; Kind.H3 -> 12.dp; else -> 6.dp }
+    // Plain holders: reporting position must not cause recompositions.
+    val laid = remember { arrayOfNulls<Any>(2) } // [LayoutCoordinates, TextLayoutResult]
+    fun report() {
+        val c = laid[0] as? LayoutCoordinates ?: return
+        val l = laid[1] as? TextLayoutResult ?: return
+        onLaid?.invoke(c, l)
+    }
+    if (onLaid != null) SideEffect { report() }
     Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(start = (20 + item.depth * 22).dp, end = 20.dp, top = top, bottom = 6.dp)) {
         item.marker?.let {
             Text(it, style = style, modifier = Modifier.widthIn(min = 28.dp))
             Spacer(Modifier.width(6.dp))
         }
-        Text(highlight(item.text, st?.sentenceRange, st?.wordRange), style = style)
+        Text(
+            highlight(item.text, st?.sentenceRange, st?.wordRange),
+            style = style,
+            onTextLayout = { laid[1] = it; report() },
+            modifier = Modifier.onGloballyPositioned { c -> laid[0] = c; report() },
+        )
     }
 }
 
