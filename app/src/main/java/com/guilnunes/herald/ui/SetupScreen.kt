@@ -46,7 +46,7 @@ fun SetupScreen(vm: MainViewModel) {
         ) {
             Text("Herald", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
             Text("Reads your Notion pages aloud. One-time setup:", style = MaterialTheme.typography.bodyLarge)
-            Step("1", "Create a free Notion connection: tap Create a new connection, name it Herald, choose your workspace. If asked, pick Internal / API token, not OAuth. Open it and copy its secret, labeled Internal Integration Secret or Installation access token.")
+            Step("1", "Create a free Notion connection: tap Create a new connection, name it Herald, choose your workspace. If asked, pick Internal / API token, not OAuth. Capabilities: check only Read content, and choose No user information. Open it and copy its secret, labeled Internal Integration Secret or Installation access token.")
             OutlinedButton(onClick = {
                 ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.notion.so/profile/integrations")))
             }) { Text("Open Notion connections") }
